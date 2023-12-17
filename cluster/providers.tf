@@ -7,10 +7,6 @@ terraform {
     null = {
       source = "hashicorp/null"
     }
-
-    helm = {
-      source = "hashicorp/helm"
-    }
   }
 }
 

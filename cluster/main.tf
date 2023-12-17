@@ -8,13 +8,9 @@ locals {
       min_size     = 1
       max_size     = 1
       desired_size = 1
-      # use SPOT to save money if you can handle interruptions
-      capacity_type = "ON_DEMAND"
-      ami_type      = "CUSTOM"
-      # Stef note: this ami does not appear to be eks optimized but 
-      # if you toggle the values back you can see this launch as expected. It won't join the cluster!
-      #ami_id                 = "ami-01ae2cc311c621dfb"
-      #custom_ami_id          = "ami-01ae2cc311c621dfb"
+      # use SPOT to save money if you can handle frequent interruptions
+      capacity_type          = "SPOT"
+      ami_type               = "CUSTOM"
       ami_id                 = data.aws_ami.default.id
       custom_ami_id          = data.aws_ami.default.id
       subnet_ids             = [sub]
@@ -56,117 +52,6 @@ data "template_file" "launch_template_userdata" {
     kubelet_extra_args   = ""
   }
 }
-
-resource "aws_launch_template" "ghost-custom" {
-  ## README Consideration #2: multi region
-  #  supply metavar "provider" here with your provider alias, ex:
-  # provider      =  aws.failover
-  name_prefix            = var.cluster_name
-  description            = "Custom launch template for to get AMI"
-  update_default_version = true
-
-  block_device_mappings {
-    device_name = "/dev/xvda"
-
-    ebs {
-      volume_size           = 100
-      volume_type           = "gp2"
-      delete_on_termination = true
-    }
-  }
-
-  ebs_optimized = true
-  # bitnami-ghost-3.33.0-0-linux-debian-10-x86_64-hvm-ebs
-  #image_id = "ami-01ae2cc311c621dfb"
-  image_id = data.aws_ami.default.id
-
-  monitoring {
-    enabled = true
-  }
-
-  user_data = base64encode(
-    data.template_file.launch_template_userdata.rendered,
-  )
-
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  vpc_security_group_ids = [
-    module.eks-ghost.node_security_group_id
-  ]
-}
-
-module "eks-ghost" {
-  source  = "terraform-aws-modules/eks/aws"
-  version = "<= 19.0"
-
-  cluster_name                   = var.cluster_name
-  cluster_endpoint_public_access = true
-  iam_role_additional_policies = {
-    "ssmcore" : "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-    "alb" : aws_iam_policy.alb-controller.arn
-  }
-
-  subnet_ids = data.terraform_remote_state.vpc.outputs.private_subnets
-  vpc_id     = data.terraform_remote_state.vpc.outputs.vpc_id
-
-  eks_managed_node_group_defaults = {
-    instance_types = ["t3.small", "t2.small"]
-  }
-  eks_managed_node_groups = local.eks_managed_node_groups
-
-  manage_aws_auth_configmap = true
-
-  aws_auth_users = var.aws_auth_users
-}
-
-## ToDo: FIX: comment the below blocks for the initial build 
-data "aws_eks_cluster" "cluster" {
-  name = module.eks-ghost.cluster_name
-}
-
-data "aws_eks_cluster_auth" "cluster" {
-  name = module.eks-ghost.cluster_name
-}
-
-provider "kubernetes" {
-  host                   = data.aws_eks_cluster.cluster.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.cluster.certificate_authority.0.data)
-  token                  = data.aws_eks_cluster_auth.cluster.token
-}
-
-resource "helm_release" "ghost-chart" {
-  name       = "ghost-chart"
-  repository = "https://charts.bitnami.com/bitnami"
-  chart      = "ghost"
-
-  set {
-    name  = "persistence.enabled"
-    value = "false"
-  }
-
-  set {
-    name  = "mysql.primary.persistence.enabled"
-    value = "false"
-  }
-
-  set {
-    name  = "ingress.enabled"
-    value = "true"
-  }
-
-  set {
-    name  = "podAnnotations"
-    value = "service.beta.kubernetes.io/aws-load-balancer-type: alb"
-  }
-
-  set {
-    name  = "podAnnotations"
-    value = "service.beta.kubernetes.io/aws-load-balancer-backend-protocol: tcp"
-  }
-}
-
 
 resource "aws_iam_policy" "alb-controller" {
   name        = "alb-policy"
@@ -395,47 +280,63 @@ resource "aws_iam_policy" "alb-controller" {
 EOT
 }
 
-resource "helm_release" "lb" {
-  name       = "alb-controller"
-  repository = "https://aws.github.io/eks-charts"
-  chart      = "aws-load-balancer-controller"
+resource "aws_launch_template" "ghost-custom" {
+  # provider      =  aws.failover
+  name_prefix            = var.cluster_name
+  description            = "Custom launch template for to get AMI"
+  update_default_version = true
 
-  set {
-    name  = "clusterName"
-    value = var.cluster_name
+  block_device_mappings {
+    device_name = "/dev/xvda"
+
+    ebs {
+      volume_size           = 100
+      volume_type           = "gp2"
+      delete_on_termination = true
+    }
   }
 
-  set {
-    name  = "awsRegion"
-    value = "us-west-2"
+  ebs_optimized = true
+  image_id      = data.aws_ami.default.id
+
+  monitoring {
+    enabled = true
   }
 
-  set {
-    name  = "rbac.create"
-    value = "true"
+  user_data = base64encode(
+    data.template_file.launch_template_userdata.rendered,
+  )
+
+  lifecycle {
+    create_before_destroy = true
   }
 
-  set {
-    name  = "region"
-    value = "us-west-2"
-  }
-
-  set {
-    name  = "singleNamespace"
-    value = "true"
-  }
-
-  set {
-    name  = "watchNamespace"
-    value = "default"
-  }
-
+  vpc_security_group_ids = [
+    module.eks-ghost.node_security_group_id
+  ]
 }
 
-provider "helm" {
-  kubernetes {
-    host                   = data.aws_eks_cluster.cluster.endpoint
-    cluster_ca_certificate = base64decode(data.aws_eks_cluster.cluster.certificate_authority.0.data)
-    token                  = data.aws_eks_cluster_auth.cluster.token
+module "eks-ghost" {
+  source  = "terraform-aws-modules/eks/aws"
+  version = "<= 19.0"
+
+  cluster_name                   = var.cluster_name
+  cluster_endpoint_public_access = true
+  iam_role_additional_policies = {
+    "ssmcore" : "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+    "alb" : aws_iam_policy.alb-controller.arn
   }
+
+  subnet_ids = data.terraform_remote_state.vpc.outputs.private_subnets
+  vpc_id     = data.terraform_remote_state.vpc.outputs.vpc_id
+
+  eks_managed_node_group_defaults = {
+    instance_types = ["t3.small", "t2.small"]
+  }
+  eks_managed_node_groups = local.eks_managed_node_groups
+
+  manage_aws_auth_configmap = true
+
+  aws_auth_users = var.aws_auth_users
 }
+
