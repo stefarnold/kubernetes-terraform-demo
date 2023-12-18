@@ -10,9 +10,11 @@ terraform init
 terraform apply -var-file tfvars/poc.tfvars
 cd ../cluster
 terraform init
-# todo: fix k8s provider manual step
+terraform apply -var-file tfvars/poc.tfvars
+cd ../app
+terraform init
 terraform apply -var-file tfvars/poc.tfvars
 ```
 
 Once the cluster is up and the helm release is ready, you can hit the Ghost demo page by hitting the ELB public DNS name. 
-ToDo: Route53
+ToDo: external-dns
