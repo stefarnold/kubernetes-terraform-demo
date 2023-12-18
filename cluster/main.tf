@@ -335,8 +335,20 @@ module "eks-ghost" {
   }
   eks_managed_node_groups = local.eks_managed_node_groups
 
-  manage_aws_auth_configmap = true
+  #create_aws_auth_configmap = true
+  #manage_aws_auth_configmap = true
 
   aws_auth_users = var.aws_auth_users
 }
 
+
+#provider "kubernetes" {
+#  host                   = module.eks-ghost.cluster_endpoint
+#  cluster_ca_certificate = base64decode(module.eks-ghost.cluster_certificate_authority_data)
+
+#  exec {
+#    api_version = "client.authentication.k8s.io/v1beta1"
+#    args        = ["eks", "get-token", "--cluster-name", var.cluster_name]
+#    command     = "aws"
+#  }
+#}
